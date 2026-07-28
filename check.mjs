@@ -1,26 +1,37 @@
-// hiring.cafe job alerts — zero-dependency Node 20 script.
+// hiring.cafe (hiringcafe.com) job alerts — zero-dependency Node 20 script.
 //
-// What it does, in order:
+// NOTE ON THE API (verified live, July 2026):
+// hiring.cafe redirects to hiringcafe.com, which is a Next.js app. There is no
+// longer a `POST /api/search-jobs` endpoint. The job feed is served by the
+// Next.js data route:
+//
+//   GET https://hiringcafe.com/_next/data/<BUILD_ID>/index.json
+//         ?searchState=<url-encoded JSON>&page=<n>
+//   header: x-nextjs-data: 1
+//
+// Response: { pageProps: { ssrHits: [...], ssrPage, ssrPageSize,
+//                          ssrTotalCount, ssrIsLastPage, ssrError } }
+//
+// <BUILD_ID> changes on every site deploy, so we scrape it from the homepage
+// HTML (window.__NEXT_DATA__.buildId) on each run — this makes the script
+// self-healing across deploys.
+//
+// What it does:
 //   1. Reads searchState.json (your decoded filter).
-//   2. POSTs it to hiring.cafe's internal API, paginating through all results.
+//   2. Scrapes the current BUILD_ID, then pages through index.json.
 //   3. Diffs the returned job IDs against seen.json.
-//   4. First run (empty/missing seen.json): seeds seen.json and sends NO email.
-//      Subsequent runs: emails you only the jobs whose IDs are new.
+//   4. First run (empty/missing seen.json): seeds seen.json, sends NO email.
+//      Later runs: emails only jobs whose IDs are new.
 //   5. Writes the updated seen.json back (the workflow commits it).
 //
-// Env vars (set as GitHub Actions secrets):
-//   RESEND_API_KEY  — Resend API key (re_...)
-//   MAIL_TO         — recipient(s), comma-separated for multiple
-//   MAIL_FROM       — verified Resend sender, e.g. "Jobs <alerts@yourdomain.com>"
-//
-// Optional env overrides (have sane defaults):
-//   PAGE_SIZE=100  MAX_PAGES=25  DRY_RUN=1 (fetch + diff but never email/seed)
+// Env vars (GitHub Actions secrets):
+//   RESEND_API_KEY, MAIL_TO, MAIL_FROM
+// Optional: PAGE_SIZE unused now; MAX_PAGES=25, DRY_RUN=1
 
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
-const API_URL = "https://hiring.cafe/api/search-jobs";
-const PAGE_SIZE = Number(process.env.PAGE_SIZE || 100);
+const SITE = "https://hiringcafe.com";
 const MAX_PAGES = Number(process.env.MAX_PAGES || 25);
 const DRY_RUN = process.env.DRY_RUN === "1";
 
@@ -28,196 +39,146 @@ const SEARCH_STATE_FILE = new URL("./searchState.json", import.meta.url);
 const SEEN_FILE = new URL("./seen.json", import.meta.url);
 
 // ---------------------------------------------------------------------------
-// Small helpers
+// Helpers
 // ---------------------------------------------------------------------------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function log(...args) {
-  console.log(`[${new Date().toISOString()}]`, ...args);
-}
-
-// Pull the first defined, non-empty value from a list of candidate paths.
-// Each path is a dotted string, e.g. "v5_processed_job_data.job_title".
-function pick(obj, paths) {
-  for (const path of paths) {
-    let cur = obj;
-    let ok = true;
-    for (const key of path.split(".")) {
-      if (cur == null || typeof cur !== "object" || !(key in cur)) {
-        ok = false;
-        break;
-      }
-      cur = cur[key];
-    }
-    if (ok && cur != null && cur !== "") return cur;
-  }
-  return undefined;
-}
+const log = (...a) => console.log(`[${new Date().toISOString()}]`, ...a);
+const firstOf = (a) => (Array.isArray(a) && a.length ? a[0] : undefined);
 
 function esc(s) {
   return String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// ---------------------------------------------------------------------------
-// Fetch with retry/backoff — Cloudflare on datacenter IPs occasionally 403s,
-// and the API can 429/5xx transiently. Retry those; fail loudly on the rest.
-// ---------------------------------------------------------------------------
+function browserHeaders(extra = {}) {
+  return {
+    Accept: "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    Referer: `${SITE}/`,
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    ...extra,
+  };
+}
+
+// Retry only on network errors and transient/blocking statuses. Anything else
+// throws immediately (so a real 404/400 doesn't waste five attempts).
 async function fetchWithRetry(url, options, { attempts = 5, baseDelay = 1500 } = {}) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
+    let res;
     try {
-      const res = await fetch(url, options);
+      res = await fetch(url, options);
+    } catch (e) {
+      lastErr = e; // network-level error → retry
+    }
+    if (res) {
       if (res.ok) return res;
-      // Retry on the codes that are worth retrying.
-      if ([403, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) {
-        const body = await res.text().catch(() => "");
-        lastErr = new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`);
-      } else {
+      if (![403, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) {
         const body = await res.text().catch(() => "");
         throw new Error(`HTTP ${res.status} (not retryable): ${body.slice(0, 300)}`);
       }
-    } catch (err) {
-      lastErr = err;
+      lastErr = new Error(`HTTP ${res.status}`);
     }
     const delay = baseDelay * 2 ** i + Math.floor(Math.random() * 500);
-    log(`  attempt ${i + 1}/${attempts} failed (${lastErr.message}); retrying in ${delay}ms`);
+    log(`  attempt ${i + 1}/${attempts} failed (${lastErr?.message}); retrying in ${delay}ms`);
     await sleep(delay);
   }
   throw new Error(`Giving up after ${attempts} attempts. Last error: ${lastErr?.message}`);
 }
 
-// Browser-ish headers reduce the odds of a Cloudflare challenge.
-function apiHeaders() {
-  return {
-    "Content-Type": "application/json",
-    Accept: "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    Origin: "https://hiring.cafe",
-    Referer: "https://hiring.cafe/",
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-  };
+// ---------------------------------------------------------------------------
+// hiringcafe.com data access
+// ---------------------------------------------------------------------------
+async function getBuildId() {
+  const res = await fetchWithRetry(`${SITE}/`, { headers: browserHeaders() });
+  const html = await res.text();
+  const m = html.match(/"buildId":"([^"]+)"/);
+  if (!m) throw new Error("Could not find buildId in homepage HTML (site markup may have changed).");
+  return m[1];
 }
 
-// ---------------------------------------------------------------------------
-// Response parsing. The API is undocumented, so field names may drift.
-// We keep every extraction here, with fallbacks, so one place needs fixing
-// if hiring.cafe renames something. Verify against DevTools (README step 4).
-// ---------------------------------------------------------------------------
-function resultsArray(payload) {
-  if (Array.isArray(payload)) return payload;
-  return (
-    pick(payload, ["results", "hits", "jobs", "data.results", "data"]) || []
-  );
+async function fetchPage(buildId, searchState, page) {
+  const url = `${SITE}/_next/data/${buildId}/index.json?searchState=${encodeURIComponent(
+    JSON.stringify(searchState)
+  )}&page=${page}`;
+  const res = await fetchWithRetry(url, { headers: browserHeaders({ "x-nextjs-data": "1" }) });
+  const json = await res.json();
+  return json.pageProps || {};
 }
 
-function jobId(item) {
-  const id = pick(item, ["id", "_id", "job_id", "objectID", "documentId", "uuid"]);
-  return id != null ? String(id) : undefined;
+// Field extraction — verified against the live response. Fallbacks kept so a
+// minor rename doesn't break everything; see README "Verify the live payload".
+function jobFields(h) {
+  const v5 = h.v5_processed_job_data || {};
+  const ji = h.job_information || {};
+  const ec = h.enriched_company_data || {};
+  const id = h.id != null ? String(h.id) : h.objectID != null ? String(h.objectID) : undefined;
+  const title = v5.core_job_title || ji.title || ji.job_title_raw || "(untitled role)";
+  const company = ec.name || v5.company_name || "(unknown company)";
+  const workplace = v5.workplace_type || "";
+  const location =
+    firstOf(v5.workplace_cities) ||
+    firstOf(v5.workplace_states) ||
+    firstOf(v5.workplace_countries) ||
+    "";
+  const url = h.apply_url || `${SITE}/`;
+  return { id, title, company, location, workplace, url };
 }
 
-function jobFields(item) {
-  const title = pick(item, [
-    "v5_processed_job_data.job_title",
-    "job_information.title",
-    "processed_job_data.job_title",
-    "title",
-    "job_title",
-    "name",
-  ]);
-  const company = pick(item, [
-    "v5_processed_job_data.company_name",
-    "processed_job_data.company_name",
-    "company_name",
-    "company.name",
-    "company",
-    "employer_name",
-  ]);
-  const location = pick(item, [
-    "v5_processed_job_data.formatted_workplace_location",
-    "v5_processed_job_data.workplace_location",
-    "processed_job_data.formatted_workplace_location",
-    "location",
-    "job_information.location",
-  ]);
-  const workplace = pick(item, [
-    "v5_processed_job_data.workplace_type",
-    "processed_job_data.workplace_type",
-    "workplace_type",
-  ]);
-  const id = jobId(item);
-  // Prefer an explicit apply/source URL; fall back to the hiring.cafe job page.
-  const url =
-    pick(item, [
-      "apply_url",
-      "apply_link",
-      "source_url",
-      "job_information.apply_url",
-      "url",
-    ]) || (id ? `https://hiring.cafe/job/${id}` : "https://hiring.cafe/");
-  return {
-    id,
-    title: title || "(untitled role)",
-    company: company || "(unknown company)",
-    location: location || "",
-    workplace: workplace || "",
-    url,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Fetch all pages of the current search.
-// ---------------------------------------------------------------------------
 async function fetchAllJobs(searchState) {
+  let buildId = await getBuildId();
+  log(`buildId=${buildId}`);
   const all = [];
   const seenThisRun = new Set();
   for (let page = 0; page < MAX_PAGES; page++) {
-    log(`Fetching page ${page} (size ${PAGE_SIZE})…`);
-    const res = await fetchWithRetry(API_URL, {
-      method: "POST",
-      headers: apiHeaders(),
-      body: JSON.stringify({ size: PAGE_SIZE, page, searchState }),
-    });
-    const payload = await res.json();
-    const rows = resultsArray(payload);
-    if (!Array.isArray(rows) || rows.length === 0) {
-      log(`  page ${page} returned 0 rows — stopping.`);
+    let pp;
+    try {
+      pp = await fetchPage(buildId, searchState, page);
+    } catch (e) {
+      // A stale buildId (deploy mid-run) shows up as a 404 — re-scrape once.
+      if (page === 0 && /HTTP 404/.test(String(e.message))) {
+        log("  buildId looked stale; re-scraping…");
+        buildId = await getBuildId();
+        pp = await fetchPage(buildId, searchState, page);
+      } else throw e;
+    }
+    if (pp.ssrError) throw new Error("API returned ssrError: " + JSON.stringify(pp.ssrError));
+    const hits = pp.ssrHits || [];
+    if (hits.length === 0) {
+      log(`  page ${page}: 0 hits — stopping.`);
       break;
     }
     let added = 0;
-    for (const row of rows) {
-      const f = jobFields(row);
-      if (!f.id) continue; // can't dedupe without an id
-      if (seenThisRun.has(f.id)) continue;
+    for (const hit of hits) {
+      const f = jobFields(hit);
+      if (!f.id || seenThisRun.has(f.id)) continue;
       seenThisRun.add(f.id);
       all.push(f);
       added++;
     }
-    log(`  page ${page}: ${rows.length} rows, ${added} unique new-to-this-run.`);
-    if (rows.length < PAGE_SIZE) break; // last page
+    log(
+      `  page ${page}: ${hits.length} hits, ${added} unique (total=${pp.ssrTotalCount}, last=${pp.ssrIsLastPage}).`
+    );
+    if (pp.ssrIsLastPage) break;
   }
   return all;
 }
 
 // ---------------------------------------------------------------------------
-// Email via Resend (single fetch, no SDK).
+// Email via Resend (single fetch, no SDK)
 // ---------------------------------------------------------------------------
 function buildEmailHtml(jobs) {
   const rows = jobs
     .map((j) => {
       const meta = [j.workplace, j.location].filter(Boolean).join(" · ");
       return `
-        <tr>
-          <td style="padding:12px 0;border-bottom:1px solid #eee;">
-            <a href="${esc(j.url)}" style="font-size:15px;font-weight:600;color:#1a56db;text-decoration:none;">${esc(j.title)}</a>
-            <div style="font-size:13px;color:#333;margin-top:2px;">${esc(j.company)}</div>
-            ${meta ? `<div style="font-size:12px;color:#777;margin-top:2px;">${esc(meta)}</div>` : ""}
-          </td>
-        </tr>`;
+        <tr><td style="padding:12px 0;border-bottom:1px solid #eee;">
+          <a href="${esc(j.url)}" style="font-size:15px;font-weight:600;color:#1a56db;text-decoration:none;">${esc(j.title)}</a>
+          <div style="font-size:13px;color:#333;margin-top:2px;">${esc(j.company)}</div>
+          ${meta ? `<div style="font-size:12px;color:#777;margin-top:2px;">${esc(meta)}</div>` : ""}
+        </td></tr>`;
     })
     .join("");
   return `<!doctype html><html><body style="margin:0;background:#f6f7f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
@@ -226,17 +187,14 @@ function buildEmailHtml(jobs) {
       <p style="font-size:13px;color:#777;margin:0 0 16px;">Matching your saved filter · ${esc(new Date().toISOString().slice(0, 16).replace("T", " "))} UTC</p>
       <table style="width:100%;border-collapse:collapse;">${rows}</table>
       <p style="font-size:11px;color:#aaa;margin-top:24px;">Automated by your GitHub Actions job-alerts workflow.</p>
-    </div>
-  </body></html>`;
+    </div></body></html>`;
 }
 
 async function sendEmail(jobs) {
   const key = process.env.RESEND_API_KEY;
   const to = (process.env.MAIL_TO || "").split(",").map((s) => s.trim()).filter(Boolean);
   const from = process.env.MAIL_FROM;
-  if (!key || !to.length || !from) {
-    throw new Error("Missing RESEND_API_KEY, MAIL_TO, or MAIL_FROM.");
-  }
+  if (!key || !to.length || !from) throw new Error("Missing RESEND_API_KEY, MAIL_TO, or MAIL_FROM.");
   const subject = `${jobs.length} new hiring.cafe job${jobs.length === 1 ? "" : "s"}`;
   const res = await fetchWithRetry("https://api.resend.com/emails", {
     method: "POST",
@@ -255,7 +213,6 @@ async function loadSeen() {
   try {
     const raw = JSON.parse(await readFile(SEEN_FILE, "utf8"));
     const ids = Array.isArray(raw) ? raw : raw.ids || [];
-    // First run also covers an existing-but-empty seen.json.
     return { ids, firstRun: ids.length === 0 };
   } catch {
     return { ids: [], firstRun: true };
@@ -263,8 +220,7 @@ async function loadSeen() {
 }
 
 async function saveSeen(ids) {
-  // Bound growth: keep the most recent 8000 IDs. Plenty for a 2-day window.
-  const capped = ids.slice(-8000);
+  const capped = ids.slice(-8000); // bound growth; plenty for a 2-day window
   await writeFile(SEEN_FILE, JSON.stringify({ ids: capped }, null, 0) + "\n");
 }
 
@@ -290,19 +246,16 @@ async function main() {
     for (const j of fresh.slice(0, 20)) log(`  NEW: ${j.title} — ${j.company} — ${j.url}`);
     return;
   }
-
   if (firstRun) {
     await saveSeen(allIds);
     log(`First run: seeded seen.json with ${allIds.length} IDs. No email sent.`);
     return;
   }
-
   if (fresh.length === 0) {
-    await saveSeen(allIds); // no-op content-wise, but harmless
+    await saveSeen(allIds);
     log("No new jobs. Nothing to send.");
     return;
   }
-
   await sendEmail(fresh);
   await saveSeen(allIds);
   log(`Done. Emailed ${fresh.length} new job(s) and updated seen.json.`);

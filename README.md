@@ -2,7 +2,9 @@
 
 Emails you new [hiring.cafe](https://hiring.cafe) jobs that match your saved filter — on a schedule, for free, with no server and no database.
 
-**How it works:** a GitHub Actions cron runs `check.mjs` every 4 hours. The script POSTs your `searchState.json` filter to hiring.cafe's own internal API (`POST /api/search-jobs`), diffs the returned job IDs against `seen.json`, and emails you only the new ones via [Resend](https://resend.com). The updated `seen.json` is committed back to the repo so state survives between runs — and the commit doubles as activity that stops GitHub disabling the cron.
+**How it works:** a GitHub Actions cron runs `check.mjs` every 4 hours. hiring.cafe now redirects to **hiringcafe.com** (a Next.js app), so the script scrapes the current build ID and fetches your `searchState.json` filter from the site's own data route (`GET /_next/data/<BUILD_ID>/index.json?searchState=…&page=…`), pages through the results, diffs the job IDs against `seen.json`, and emails you only the new ones via [Resend](https://resend.com). The updated `seen.json` is committed back to the repo so state survives between runs — and the commit doubles as activity that stops GitHub disabling the cron.
+
+> The old `POST /api/search-jobs` endpoint no longer exists — the site was rebuilt on Next.js. `check.mjs` targets the current data route and re-scrapes the build ID each run, so it self-heals across site deploys.
 
 **First run is silent by design:** it seeds `seen.json` with everything currently matching and sends no email, so you don't get a several-hundred-job blast on day one. Alerts start from the *second* run onward.
 
@@ -46,11 +48,11 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 
 ### 4. Verify the live payload (important — the API is undocumented)
 
-Field names in this internal API can shift without notice, so confirm yours before trusting it:
+This internal data route can shift without notice, so confirm it if a run ever comes back empty:
 
-1. Open [hiring.cafe](https://hiring.cafe), apply your filter, open **DevTools → Network**.
-2. Find the `search-jobs` request → **Payload** tab. Confirm the body is `{ size, page, searchState }` and that `searchState` matches the one in this repo. If hiring.cafe changed anything, copy the live `searchState` over the file here.
-3. **Response** tab → confirm where each job's **ID**, **title**, and **company** live. `check.mjs` already tries the common paths (`id`, `v5_processed_job_data.job_title`, `company_name`, …). If yours differ, edit the candidate lists in the `jobId()` / `jobFields()` functions — they're grouped together for exactly this reason.
+1. Open [hiringcafe.com](https://hiringcafe.com), apply your filter, open **DevTools → Network**.
+2. Find the `index.json?searchState=…` request under `_next/data/<BUILD_ID>/`. Confirm `searchState` in the URL matches the one in this repo; if the site changed field names, copy the live `searchState` over the file here.
+3. **Response** tab → jobs live in `pageProps.ssrHits`, with pagination via `&page=N` until `pageProps.ssrIsLastPage` is true. Each hit exposes `id`, `apply_url`, `v5_processed_job_data.core_job_title`, `enriched_company_data.name`, and `v5_processed_job_data.workplace_type` / `workplace_cities`. If any of these are renamed, edit the fallbacks in the `jobFields()` function — they're grouped together for exactly this reason.
 
 ### 5. Test it
 
