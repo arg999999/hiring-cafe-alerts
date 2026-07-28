@@ -25,11 +25,15 @@
 //   5. Writes the updated seen.json back (the workflow commits it).
 //
 // Env vars (GitHub Actions secrets):
-//   RESEND_API_KEY, MAIL_TO, MAIL_FROM
-// Optional: PAGE_SIZE unused now; MAX_PAGES=25, DRY_RUN=1
+//   GMAIL_USER            your Gmail address (sender + SMTP login)
+//   GMAIL_APP_PASSWORD    16-char Google "App Password" (NOT your login password)
+//   MAIL_TO               where alerts go (comma-separated; defaults to GMAIL_USER)
+//   MAIL_FROM             optional display sender (defaults to GMAIL_USER)
+// Optional: MAX_PAGES=25, DRY_RUN=1
 
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import nodemailer from "nodemailer";
 
 const SITE = "https://hiringcafe.com";
 const MAX_PAGES = Number(process.env.MAX_PAGES || 25);
@@ -167,7 +171,7 @@ async function fetchAllJobs(searchState) {
 }
 
 // ---------------------------------------------------------------------------
-// Email via Resend (single fetch, no SDK)
+// Email via Gmail SMTP (free — uses a Google App Password, no paid service)
 // ---------------------------------------------------------------------------
 function buildEmailHtml(jobs) {
   const rows = jobs
@@ -191,18 +195,21 @@ function buildEmailHtml(jobs) {
 }
 
 async function sendEmail(jobs) {
-  const key = process.env.RESEND_API_KEY;
-  const to = (process.env.MAIL_TO || "").split(",").map((s) => s.trim()).filter(Boolean);
-  const from = process.env.MAIL_FROM;
-  if (!key || !to.length || !from) throw new Error("Missing RESEND_API_KEY, MAIL_TO, or MAIL_FROM.");
-  const subject = `${jobs.length} new hiring.cafe job${jobs.length === 1 ? "" : "s"}`;
-  const res = await fetchWithRetry("https://api.resend.com/emails", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to, subject, html: buildEmailHtml(jobs) }),
+  const user = process.env.GMAIL_USER;
+  // App passwords are shown with spaces ("abcd efgh ijkl mnop"); strip them.
+  const pass = (process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "");
+  const to = (process.env.MAIL_TO || user || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const from = process.env.MAIL_FROM || (user ? `hiring.cafe alerts <${user}>` : undefined);
+  if (!user || !pass || !to.length) {
+    throw new Error("Missing GMAIL_USER, GMAIL_APP_PASSWORD, or MAIL_TO.");
+  }
+  const transporter = nodemailer.createTransport({
+    service: "gmail", // smtp.gmail.com, port 465, TLS
+    auth: { user, pass },
   });
-  const out = await res.json().catch(() => ({}));
-  log(`Email sent (Resend id: ${out.id || "unknown"}).`);
+  const subject = `${jobs.length} new hiring.cafe job${jobs.length === 1 ? "" : "s"}`;
+  const info = await transporter.sendMail({ from, to, subject, html: buildEmailHtml(jobs) });
+  log(`Email sent (messageId: ${info.messageId}).`);
 }
 
 // ---------------------------------------------------------------------------

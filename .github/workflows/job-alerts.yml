@@ -2,8 +2,9 @@ name: hiring.cafe job alerts
 
 on:
   schedule:
-    # Every 4 hours. Cron is UTC — 00:00 UTC == 05:30 IST, then 04:00, 08:00 UTC...
-    - cron: "0 */4 * * *"
+    # Every 10 minutes. NOTE: GitHub cron is best-effort — under load, scheduled
+    # runs can be delayed or occasionally skipped, so treat "10 min" as a target.
+    - cron: "*/10 * * * *"
   workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
 
 permissions:
@@ -23,9 +24,13 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Install dependencies (nodemailer)
+        run: npm install --no-audit --no-fund
+
       - name: Check for new jobs
         env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
         run: node check.mjs

@@ -2,7 +2,7 @@
 
 Emails you new [hiring.cafe](https://hiring.cafe) jobs that match your saved filter — on a schedule, for free, with no server and no database.
 
-**How it works:** a GitHub Actions cron runs `check.mjs` every 4 hours. hiring.cafe now redirects to **hiringcafe.com** (a Next.js app), so the script scrapes the current build ID and fetches your `searchState.json` filter from the site's own data route (`GET /_next/data/<BUILD_ID>/index.json?searchState=…&page=…`), pages through the results, diffs the job IDs against `seen.json`, and emails you only the new ones via [Resend](https://resend.com). The updated `seen.json` is committed back to the repo so state survives between runs — and the commit doubles as activity that stops GitHub disabling the cron.
+**How it works:** a GitHub Actions cron runs `check.mjs` every 10 minutes. hiring.cafe now redirects to **hiringcafe.com** (a Next.js app), so the script scrapes the current build ID and fetches your `searchState.json` filter from the site's own data route (`GET /_next/data/<BUILD_ID>/index.json?searchState=…&page=…`), pages through the results, diffs the job IDs against `seen.json`, and emails you only the new ones **from your own Gmail** (free, via a Google App Password — no paid service). The updated `seen.json` is committed back to the repo so state survives between runs — and the commit doubles as activity that stops GitHub disabling the cron.
 
 > The old `POST /api/search-jobs` endpoint no longer exists — the site was rebuilt on Next.js. `check.mjs` targets the current data route and re-scrapes the build ID each run, so it self-heals across site deploys.
 
@@ -20,7 +20,7 @@ hiring.cafe has built-in **saved-search email alerts**. Create your search on th
 
 ### 1. Create the repo
 
-Push these files to a **private** GitHub repo (private = unlimited free Actions minutes for this workload):
+Push these files to GitHub:
 
 ```
 check.mjs
@@ -30,21 +30,26 @@ package.json
 .github/workflows/job-alerts.yml
 ```
 
-### 2. Get a Resend account + sender
+**Public vs private for 10-minute polling:** running every 10 min is ~4,300 runs/month. A **public** repo gets *unlimited* free Actions minutes — recommended, and safe here because no secrets live in the code (they're stored as encrypted GitHub Secrets). A **private** repo only includes 2,000 free minutes/month, which this cadence can exceed. If you keep it private and hit the cap, either lower the frequency or switch the repo to public.
 
-1. Sign up at [resend.com](https://resend.com) (free tier: 3,000 emails/month).
-2. Create an **API key** → copy it (`re_...`).
-3. Set a **from address**. Fastest path: use Resend's test sender `onboarding@resend.dev`, which can only email *your own* account address — perfect for this. For a custom domain, verify it under Domains first, then use e.g. `alerts@yourdomain.com`.
+### 2. Create a Gmail App Password (free)
 
-### 3. Add three repository secrets
+Sending happens through your own Gmail over SMTP — no third-party service, no subscription.
+
+1. Turn on **2-Step Verification** for your Google account (required for app passwords): [myaccount.google.com/security](https://myaccount.google.com/security).
+2. Create an **App Password**: [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) → name it e.g. "hiring alerts" → Google gives you a 16-character password like `abcd efgh ijkl mnop`.
+3. That app password is what the script logs in with — **not** your normal Gmail password. (Spaces are fine; the script strips them.)
+
+### 3. Add the repository secrets
 
 Repo → **Settings → Secrets and variables → Actions → New repository secret**:
 
-| Secret           | Value                                             |
-| ---------------- | ------------------------------------------------- |
-| `RESEND_API_KEY` | your `re_...` key                                 |
-| `MAIL_TO`        | where alerts go (comma-separate for several)      |
-| `MAIL_FROM`      | e.g. `Jobs <onboarding@resend.dev>` or your domain sender |
+| Secret               | Value                                                  |
+| -------------------- | ------------------------------------------------------ |
+| `GMAIL_USER`         | your Gmail address (e.g. `you@gmail.com`)              |
+| `GMAIL_APP_PASSWORD` | the 16-char app password from step 2                   |
+| `MAIL_TO`            | where alerts go (defaults to `GMAIL_USER`; comma-separate for several) |
+| `MAIL_FROM`          | optional display sender; defaults to `GMAIL_USER`     |
 
 ### 4. Verify the live payload (important — the API is undocumented)
 
@@ -71,22 +76,25 @@ Once the manual run is green, the cron takes over automatically.
 
 | Want to…                     | Do this                                                                 |
 | ---------------------------- | ----------------------------------------------------------------------- |
-| Change how often it checks   | Edit the `cron` in `.github/workflows/job-alerts.yml` (UTC).            |
+| Change how often it checks   | Edit the `cron` in `.github/workflows/job-alerts.yml` (UTC). Currently `*/10 * * * *` = every 10 min. |
 | Change the filter            | Re-copy `searchState` from DevTools into `searchState.json`.            |
 | Widen the fresh-jobs window  | Bump `dateFetchedPastNDays` in `searchState.json`.                     |
 | Reset alerts (re-seed)       | Set `seen.json` back to `{ "ids": [] }` and commit.                    |
 | Preview without sending      | `DRY_RUN=1 node check.mjs`                                              |
 
-## The one real risk: Cloudflare
+## Good to know
 
-hiring.cafe sits behind Cloudflare, and GitHub Actions runners use **datacenter IPs** that Cloudflare sometimes 403s. `check.mjs` retries with exponential backoff, which handles transient blocks. If it becomes *persistent* (every run 403s), the cheapest fix is to run the exact same script via `cron` on any always-on machine at home — a residential IP sidesteps the block entirely. The script and files don't change; only where it runs does.
+**Cloudflare / datacenter IPs:** hiringcafe.com is behind Cloudflare, and GitHub runners use datacenter IPs. In testing the data route returned fine from GitHub, but if a run ever starts failing with persistent `403`s, `check.mjs` already retries with backoff — and the ultimate fallback is to run the same script via `cron` on any always-on machine at home (a residential IP sidesteps it). The script doesn't change; only where it runs does.
+
+**Cron punctuality:** GitHub's scheduled runs are best-effort. Most fire close to schedule, but under load they can be delayed several minutes or occasionally skipped — so "every 10 minutes" is a target, not a guarantee. For truly precise 10-minute polling, run it from a home machine's cron instead.
 
 ## Files
 
 | File                                  | Purpose                                                        |
 | ------------------------------------- | ------------------------------------------------------------- |
-| `check.mjs`                           | The whole thing: fetch → paginate → diff → email. Zero deps.  |
+| `check.mjs`                           | The whole thing: fetch → paginate → diff → email via Gmail.   |
 | `searchState.json`                    | Your decoded hiring.cafe filter.                              |
 | `seen.json`                           | Job IDs already alerted on. Committed back each run.          |
-| `.github/workflows/job-alerts.yml`    | The cron + run + commit workflow.                             |
+| `.github/workflows/job-alerts.yml`    | The cron + install + run + commit workflow.                   |
+| `package.json`                        | Declares the one dependency (nodemailer).                     |
 | `.env.example`                        | Template for local testing only.                             |
