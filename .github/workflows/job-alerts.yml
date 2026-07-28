@@ -1,0 +1,43 @@
+name: hiring.cafe job alerts
+
+on:
+  schedule:
+    # Every 4 hours. Cron is UTC — 00:00 UTC == 05:30 IST, then 04:00, 08:00 UTC...
+    - cron: "0 */4 * * *"
+  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write # needed to commit seen.json back to the repo
+
+concurrency:
+  group: job-alerts
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check for new jobs
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+        run: node check.mjs
+
+      - name: Persist seen job IDs
+        run: |
+          if [[ -n "$(git status --porcelain seen.json)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add seen.json
+            git commit -m "chore: update seen jobs [skip ci]"
+            git push
+          else
+            echo "No state change."
+          fi

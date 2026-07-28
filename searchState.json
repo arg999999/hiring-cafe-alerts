@@ -1,0 +1,86 @@
+{
+  "locations": [
+    {
+      "id": "YBg1yZQBoEtHp_8UbmaX",
+      "types": ["locality"],
+      "address_components": [
+        { "long_name": "Gurugram", "short_name": "Gurugram", "types": ["locality"] },
+        { "long_name": "Haryana", "short_name": "10", "types": ["administrative_area_level_1"] },
+        { "long_name": "India", "short_name": "IN", "types": ["country"] }
+      ],
+      "geometry": { "location": { "lat": 28.4601, "lon": 77.02635 } },
+      "formatted_address": "Gurugram, Haryana, IN",
+      "population": 886519,
+      "workplace_types": [],
+      "options": {
+        "radius": 50,
+        "radius_unit": "miles",
+        "ignore_radius": false,
+        "flexible_regions": [
+          "anywhere_in_world",
+          "anywhere_in_continent",
+          "anywhere_in_country",
+          "anywhere_in_administrative_area_level_1"
+        ]
+      }
+    },
+    {
+      "id": "Asiacontinent",
+      "types": ["continent"],
+      "formatted_address": "Asia",
+      "address_components": [],
+      "workplace_types": ["Remote"],
+      "options": { "flexible_regions": ["anywhere_in_world"] }
+    },
+    {
+      "id": "Indiacountry",
+      "types": ["country"],
+      "formatted_address": "India",
+      "address_components": [
+        { "long_name": "India", "short_name": "IN", "types": ["country"] }
+      ],
+      "workplace_types": ["Remote", "Hybrid", "Onsite"],
+      "options": { "flexible_regions": ["anywhere_in_world", "anywhere_in_continent"] }
+    },
+    {
+      "id": "KRY1yZQBoEtHp_8UEq3V",
+      "types": ["continent"],
+      "address_components": [
+        { "long_name": "Europe", "short_name": "Europe", "types": ["continent"] }
+      ],
+      "formatted_address": "Europe",
+      "population": 750000000,
+      "workplace_types": ["Remote"],
+      "options": { "flexible_regions": ["anywhere_in_world"] }
+    }
+  ],
+  "departments": [
+    "Engineering",
+    "Software Development",
+    "Information Technology",
+    "Data and Analytics"
+  ],
+  "roleYoeRange": [0, 4],
+  "sortBy": "date",
+  "technologyKeywordsQuery": "(\"react\" OR \"react.js\" OR \"reactjs\" OR \"next.js\" OR \"nextjs\" OR \"redux\" OR \"node.js\" OR \"node\" OR \"nestjs\" OR \"nest.js\" OR \"express\" OR \"typescript\")",
+  "searchQuery": "",
+  "jobTitleQuery": "",
+  "jobDescriptionQuery": "",
+  "requirementsKeywordsQuery": "",
+  "dateFetchedPastNDays": 2,
+  "workplaceTypes": ["Remote", "Hybrid", "Onsite"],
+  "commitmentTypes": ["Full Time", "Contract", "Internship"],
+  "seniorityLevel": ["No Prior Experience Required", "Entry Level", "Mid Level"],
+  "roleTypes": ["Individual Contributor"],
+  "excludeIfRoleYoeIsNotSpecified": false,
+  "companyNames": [],
+  "excludedCompanyNames": [],
+  "hiddenCompanies": [],
+  "hideJobTypes": [],
+  "industries": [],
+  "excludedIndustries": [],
+  "restrictJobsToTransparentSalaries": false,
+  "user": null,
+  "defaultToUserLocation": false,
+  "userLocation": null
+}

@@ -1,0 +1,12 @@
+{
+  "name": "hiring-cafe-job-alerts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Emails you new hiring.cafe jobs matching a saved filter. Zero dependencies.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node check.mjs",
+    "dry-run": "DRY_RUN=1 node check.mjs"
+  }
+}
