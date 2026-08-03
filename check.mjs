@@ -127,7 +127,10 @@ function jobFields(h) {
     firstOf(v5.workplace_states) ||
     firstOf(v5.workplace_countries) ||
     "";
-  const url = h.apply_url || `${SITE}/`;
+  const _slug = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  const _req = h.requisition_id;
+  const _slugStr = [title, company, location].map(_slug).filter(Boolean).join("-");
+  const url = _req ? `${SITE}/job/${_slugStr ? _slugStr + "-" : ""}${_req}` : (h.apply_url || `${SITE}/`);
   return { id, title, company, location, workplace, url };
 }
 
