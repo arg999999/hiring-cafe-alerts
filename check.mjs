@@ -134,11 +134,46 @@ function jobFields(h) {
   return { id, title, company, location, workplace, url };
 }
 
+// ---------------------------------------------------------------------------
+// Exclude jobs that MANDATE a tech the user avoids (Java, Python, .NET, Spring
+// Boot, Angular). A tech shown as an ALTERNATIVE — slash-joined ("Node/Python")
+// or "X or Y" — is treated as optional, so the job is kept. Runs on the
+// requirements summary so a mere skills-tag mention elsewhere is ignored.
+// ---------------------------------------------------------------------------
+const EXCLUDED_TECH = [
+  /\bjava\b/i,          // \b avoids matching "javascript"
+  /\bpython\b/i,
+  /\.net\b/i,
+  /\bdotnet\b/i,
+  /\basp\.net\b/i,
+  /\bspring\s*boot\b/i,
+  /\bspringboot\b/i,
+  /\bangular(?:\.?js)?\b/i,
+];
+
+function mandatoryExcludedTech(text) {
+  if (!text) return false;
+  for (const base of EXCLUDED_TECH) {
+    const re = new RegExp(base.source, "ig");
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const s = m.index, e = s + m[0].length;
+      const before = text.slice(Math.max(0, s - 1), s);
+      const after = text.slice(e, e + 1);
+      const win = text.slice(Math.max(0, s - 6), Math.min(text.length, e + 6));
+      const flexible = before === "/" || after === "/" || /\bor\b/i.test(win);
+      if (!flexible) return true; // a standalone (mandatory) mention
+    }
+  }
+  return false;
+}
+
 async function fetchAllJobs(searchState) {
   let buildId = await getBuildId();
   log(`buildId=${buildId}`);
   const all = [];
   const seenThisRun = new Set();
+  let excludedByTech = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
     let pp;
     try {
@@ -161,6 +196,8 @@ async function fetchAllJobs(searchState) {
     for (const hit of hits) {
       const f = jobFields(hit);
       if (!f.id || seenThisRun.has(f.id)) continue;
+      const _req = (hit.v5_processed_job_data || {}).requirements_summary || "";
+      if (mandatoryExcludedTech(_req)) { excludedByTech++; continue; }
       seenThisRun.add(f.id);
       all.push(f);
       added++;
@@ -170,6 +207,7 @@ async function fetchAllJobs(searchState) {
     );
     if (pp.ssrIsLastPage) break;
   }
+  if (excludedByTech) log(`  excluded ${excludedByTech} job(s): unwanted tech required (not an alternative).`);
   return all;
 }
 
