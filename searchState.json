@@ -62,7 +62,7 @@
   ],
   "roleYoeRange": [0, 4],
   "sortBy": "date",
-  "technologyKeywordsQuery": "(\"react\" OR \"react.js\" OR \"reactjs\" OR \"next.js\" OR \"nextjs\" OR \"redux\" OR \"node.js\" OR \"node\" OR \"nestjs\" OR \"nest.js\" OR \"express\" OR \"typescript\")",
+  "technologyKeywordsQuery": "(((\"react\" OR \"react.js\" OR \"reactjs\") AND (\"typescript\")) OR ((\"react\" OR \"react.js\" OR \"reactjs\") AND (\"node.js\" OR \"nodejs\")) OR ((\"react\" OR \"react.js\" OR \"reactjs\") AND (\"nestjs\" OR \"nest.js\")) OR ((\"react\" OR \"react.js\" OR \"reactjs\") AND (\"javascript\")) OR ((\"typescript\") AND (\"node.js\" OR \"nodejs\")) OR ((\"typescript\") AND (\"nestjs\" OR \"nest.js\")) OR ((\"typescript\") AND (\"javascript\")) OR ((\"node.js\" OR \"nodejs\") AND (\"nestjs\" OR \"nest.js\")) OR ((\"node.js\" OR \"nodejs\") AND (\"javascript\")) OR ((\"nestjs\" OR \"nest.js\") AND (\"javascript\")))",
   "searchQuery": "",
   "jobTitleQuery": "",
   "jobDescriptionQuery": "",
