@@ -66,7 +66,7 @@
   "searchQuery": "",
   "jobTitleQuery": "",
   "jobDescriptionQuery": "",
-  "requirementsKeywordsQuery": "",
+  "requirementsKeywordsQuery": "NOT (\"java\" OR \"python\" OR \".net\" OR \"dotnet\" OR \"spring boot\" OR \"springboot\" OR \"angular\" OR \"angularjs\")",
   "dateFetchedPastNDays": 2,
   "workplaceTypes": ["Remote", "Hybrid", "Onsite"],
   "commitmentTypes": ["Full Time", "Contract", "Internship"],
