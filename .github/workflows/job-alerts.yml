@@ -5,7 +5,12 @@ on:
     # Every 10 minutes. NOTE: GitHub cron is best-effort — under load, scheduled
     # runs can be delayed or occasionally skipped, so treat "10 min" as a target.
     - cron: "*/10 * * * *"
-  workflow_dispatch: {} # lets you trigger a run manually from the Actions tab
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: list new jobs but send no email and don't update seen.json"
+        type: boolean
+        default: true
 
 permissions:
   contents: write # needed to commit seen.json back to the repo
@@ -33,6 +38,7 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '1' || '' }}
         run: node check.mjs
 
       - name: Persist seen job IDs
