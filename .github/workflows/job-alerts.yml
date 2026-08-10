@@ -2,9 +2,9 @@ name: hiring.cafe job alerts
 
 on:
   schedule:
-    # Every 10 minutes. NOTE: GitHub cron is best-effort — under load, scheduled
-    # runs can be delayed or occasionally skipped, so treat "10 min" as a target.
-    - cron: "*/10 * * * *"
+    # Every 15 minutes. NOTE: GitHub cron is best-effort — under load, scheduled
+    # runs can be delayed or occasionally skipped, so treat "15 min" as a target.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
